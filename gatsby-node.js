@@ -1,7 +1,16 @@
+/**
+ * Gatsby Node API implementation
+ * Handles webpack configuration, schema customization, node creation, and page generation
+ */
+
 const path = require("path");
 const webpack = require(`webpack`);
 const SVGO = require("svgo");
 
+/**
+ * SVGO instance for optimizing SVG files
+ * Removes XML namespaces, inlines styles, converts styles to attributes, and removes IDs
+ */
 const svgo = new SVGO({
   plugins: [
     { removeXMLNS: true },
@@ -19,8 +28,16 @@ const svgo = new SVGO({
   ],
 });
 
-// https://www.gatsbyjs.org/packages/gatsby-plugin-netlify-cms/#disable-widget-on-site
+/**
+ * Configures webpack to ignore netlify-identity-widget on the site
+ * @see https://www.gatsbyjs.org/packages/gatsby-plugin-netlify-cms/#disable-widget-on-site
+ */
 exports.onCreateWebpackConfig = ({ actions }) => {
+  if (!actions) {
+    console.error("Actions object is required for webpack configuration");
+    return;
+  }
+  
   actions.setWebpackConfig({
     plugins: [
       new webpack.IgnorePlugin({
@@ -30,7 +47,16 @@ exports.onCreateWebpackConfig = ({ actions }) => {
   });
 };
 
+/**
+ * Creates custom GraphQL schema types for the site
+ * Defines types for Navigation, SideNav, Sections, and content structure
+ */
 exports.createSchemaCustomization = ({ actions, schema }) => {
+  if (!actions) {
+    console.error("Actions object is required for schema customization");
+    return;
+  }
+  
   const { createTypes } = actions;
   const typeDefs = [
     `
@@ -118,6 +144,12 @@ exports.createSchemaCustomization = ({ actions, schema }) => {
   createTypes(typeDefs);
 };
 
+/**
+ * Processes nodes during creation
+ * - Creates slug fields for content types
+ * - Recursively creates markdown nodes from JSON fields starting with 'md'
+ * - Optimizes and inlines SVG files
+ */
 exports.onCreateNode = async ({
   node,
   getNode,
@@ -126,10 +158,20 @@ exports.onCreateNode = async ({
   loadNodeContent,
   createContentDigest,
 }) => {
+  if (!node || !actions) {
+    console.error("Node and actions are required");
+    return;
+  }
+  
   const { createNodeField, createParentChildLink, createNode } = actions;
   const typesToSlug = ["MarkdownRemark", "PagesJson", "ContentJson"];
+  
   if (typesToSlug.includes(node.internal.type)) {
     const fileNode = getNode(node.parent);
+    if (!fileNode) {
+      console.warn(`Parent file node not found for node: ${node.id}`);
+      return;
+    }
     const fileName = fileNode.name;
     createNodeField({
       node,
@@ -139,10 +181,10 @@ exports.onCreateNode = async ({
   }
 
   if (node.internal.type === "PagesJson") {
-    //
-    //  recursively create markdown nodes for any key in the json
-    //  node that starts with 'md'
-    //
+    /**
+     * Recursively creates markdown nodes for any key in the JSON
+     * node that starts with 'md'
+     */
     const createFieldsForObject = (obj, path) => {
       Object.entries(obj).forEach(([key, value]) => {
         const newPath = `${path}${key}`;
@@ -171,30 +213,51 @@ exports.onCreateNode = async ({
   }
 
   if (node.internal.mediaType === "image/svg+xml") {
-    //
-    // Load content of svg files so they can be rendered
-    // inline
-    //
-
-    const id = createNodeId(node.id);
-    const fileContent = await loadNodeContent(node);
-    const { data: rawSvg } = await svgo.optimize(fileContent);
-    const svgNode = {
-      id,
-      children: [],
-      rawSvg,
-      parent: node.id,
-      internal: {
-        type: "InlineSvg",
-        contentDigest: createContentDigest(rawSvg),
-      },
-    };
-    createNode(svgNode);
-    createParentChildLink({ parent: node, child: svgNode });
+    /**
+     * Loads content of SVG files so they can be rendered inline
+     * Optimizes SVGs using SVGO and creates inline SVG nodes
+     */
+    try {
+      const id = createNodeId(node.id);
+      const fileContent = await loadNodeContent(node);
+      
+      if (!fileContent) {
+        console.warn(`Empty content for SVG file: ${node.id}`);
+        return;
+      }
+      
+      const { data: rawSvg } = await svgo.optimize(fileContent);
+      const svgNode = {
+        id,
+        children: [],
+        rawSvg,
+        parent: node.id,
+        internal: {
+          type: "InlineSvg",
+          contentDigest: createContentDigest(rawSvg),
+        },
+      };
+      createNode(svgNode);
+      createParentChildLink({ parent: node, child: svgNode });
+    } catch (error) {
+      console.error(`Error processing SVG file ${node.id}:`, error.message);
+    }
   }
 };
 
+/**
+ * Creates pages programmatically
+ * - Static pages from JSON
+ * - Media list pages (announcements, blog)
+ * - Individual media pages
+ * - News list pages
+ */
 exports.createPages = async ({ graphql, actions: { createPage } }) => {
+  if (!graphql || !createPage) {
+    console.error("GraphQL and createPage are required");
+    return;
+  }
+  
   //
   //  STATIC PAGES
   //
@@ -210,9 +273,20 @@ exports.createPages = async ({ graphql, actions: { createPage } }) => {
     }
   `);
 
+  if (pagesResult.errors) {
+    console.error("Error fetching pages:", pagesResult.errors);
+    throw new Error("Failed to fetch pages");
+  }
+
   const staticPageTemplate = path.resolve("src/templates/static-page.tsx");
   const pages = pagesResult.data.allPagesJson.nodes;
+  
   for (let i = 0; i < pages.length; i++) {
+    if (!pages[i].navigation || !pages[i].navigation.link) {
+      console.warn(`Page ${i} is missing navigation link, skipping`);
+      continue;
+    }
+    
     createPage({
       path: pages[i].navigation.link,
       component: staticPageTemplate,
@@ -234,7 +308,7 @@ exports.createPages = async ({ graphql, actions: { createPage } }) => {
   const pageSize = 10;
 
   for (let [mediaType, title] of mediaTypes) {
-    const { data } = await graphql(`{
+    const mediaResult = await graphql(`{
       allMarkdownRemark(
         filter: { frontmatter: { type: { eq: "${mediaType}" }}}
         sort: { fields: [frontmatter___date], order: DESC }
@@ -246,7 +320,13 @@ exports.createPages = async ({ graphql, actions: { createPage } }) => {
         }
       }
     }`);
-    const results = data.allMarkdownRemark.nodes;
+    
+    if (mediaResult.errors) {
+      console.error(`Error fetching ${mediaType}:`, mediaResult.errors);
+      continue;
+    }
+    
+    const results = mediaResult.data.allMarkdownRemark.nodes;
     const numPages = Math.ceil(results.length / pageSize);
 
     // create list pages for this media type
@@ -287,7 +367,7 @@ exports.createPages = async ({ graphql, actions: { createPage } }) => {
   //  NEWS ARTICLES
   //
   const newsListPage = path.resolve("src/templates/news-list.tsx");
-  const { data: newsData } = await graphql(`
+  const newsResult = await graphql(`
     {
       allMarkdownRemark(
         filter: { frontmatter: { type: { eq: "news" } } }
@@ -301,7 +381,13 @@ exports.createPages = async ({ graphql, actions: { createPage } }) => {
       }
     }
   `);
-  const results = newsData.allMarkdownRemark.nodes;
+  
+  if (newsResult.errors) {
+    console.error("Error fetching news articles:", newsResult.errors);
+    throw new Error("Failed to fetch news articles");
+  }
+  
+  const results = newsResult.data.allMarkdownRemark.nodes;
   const numPages = Math.ceil(results.length / 15);
 
   // create list pages for news articles

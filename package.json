@@ -47,8 +47,12 @@
   },
   "scripts": {
     "build": "gatsby build",
+    "clean": "gatsby clean",
     "develop": "gatsby develop",
-    "format": "prettier --write \"src/**/*.ts*\""
+    "format": "prettier --write \"src/**/*.ts*\"",
+    "lint": "prettier --check \"src/**/*.ts*\"",
+    "serve": "gatsby serve",
+    "type-check": "tsc --noEmit"
   },
   "browserslist": [
     ">0.25%",
