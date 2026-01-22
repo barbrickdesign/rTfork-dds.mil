@@ -1,3 +1,8 @@
+/**
+ * Gatsby Configuration
+ * Defines site metadata and configures all plugins for the site build
+ */
+
 const path = require("path");
 const robots = require("./config/robots");
 
